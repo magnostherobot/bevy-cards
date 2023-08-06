@@ -8,16 +8,37 @@ struct AnimationTimer(Timer);
 #[derive(Component, Deref, DerefMut)]
 struct AnimationFrames(RangeInclusive<usize>);
 
+#[derive(Clone, Copy)]
+enum Suit {
+    Hearts,
+    Diamonds,
+    Spades,
+    Clubs,
+}
+
 #[derive(Component)]
 struct CardData {
     faceup: bool,
-    id: u8,
+    id: usize,
+    rank: u8,
+    suit: Suit,
 }
 
 const FACE_DOWN_INDEX: u8 = 52;
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
+}
+
+fn sprite_index_from_data(data: &CardData) -> usize {
+    (match data.suit {
+        Suit::Hearts => 0,
+        Suit::Diamonds => 1,
+        Suit::Spades => 2,
+        Suit::Clubs => 3,
+    } * 13
+        + data.rank)
+        .into()
 }
 
 fn setup(
@@ -31,17 +52,22 @@ fn setup(
 
     for i in 0..13u8 {
         debug!("spawning card #{i}");
+
+        let data = CardData {
+            faceup: true,
+            id: i.into(),
+            rank: i % 13,
+            suit: [Suit::Hearts, Suit::Diamonds, Suit::Spades, Suit::Clubs][usize::from(i % 4)],
+        };
+
         commands.spawn((
             SpriteSheetBundle {
                 texture_atlas: texture_atlas_handle.clone(),
-                sprite: TextureAtlasSprite::new(i.into()),
+                sprite: TextureAtlasSprite::new(sprite_index_from_data(&data)),
                 transform: Transform::from_xyz(f32::from(i) * 40., 0., 0.),
                 ..default()
             },
-            CardData {
-                faceup: true,
-                id: i,
-            },
+            data,
         ));
     }
 }
@@ -63,7 +89,7 @@ fn flip_card(data: &mut CardData, sprite: &mut TextureAtlasSprite) {
         }
         false => {
             data.faceup = true;
-            sprite.index = data.id.into();
+            sprite.index = sprite_index_from_data(data);
         }
     }
 }
