@@ -24,6 +24,32 @@ struct CardData {
     suit: Suit,
 }
 
+fn new_card(
+    id: usize,
+    rank: u8,
+    suit: Suit,
+    faceup: bool,
+    transform: Transform,
+    texture_atlas_handle: Handle<TextureAtlas>,
+) -> (SpriteSheetBundle, CardData) {
+    let data = CardData {
+        faceup,
+        id,
+        rank,
+        suit,
+    };
+
+    (
+        SpriteSheetBundle {
+            texture_atlas: texture_atlas_handle,
+            sprite: TextureAtlasSprite::new(sprite_index_from_data(&data)),
+            transform,
+            ..default()
+        },
+        data,
+    )
+}
+
 const FACE_DOWN_INDEX: u8 = 52;
 
 fn setup_camera(mut commands: Commands) {
@@ -51,34 +77,42 @@ fn setup(
     let texture_atlas_handle = texture_atlases.add(texture_atlas);
 
     for i in 0..13u8 {
-        debug!("spawning card #{i}");
+        for s in 0..4u8 {
+            debug!("spawning card ({i},{s})");
 
-        let data = CardData {
-            faceup: true,
-            id: i.into(),
-            rank: i % 13,
-            suit: [Suit::Hearts, Suit::Diamonds, Suit::Spades, Suit::Clubs][usize::from(i % 4)],
-        };
+            fn trans(i: f32, s: f32, z: f32) -> Vec3 {
+                Vec3 {
+                    x: 40. * i,
+                    y: 54. * s,
+                    z,
+                }
+            }
 
-        commands.spawn((
-            SpriteSheetBundle {
-                texture_atlas: texture_atlas_handle.clone(),
-                sprite: TextureAtlasSprite::new(sprite_index_from_data(&data)),
-                transform: Transform::from_xyz(f32::from(i) * 40., 0., 0.),
-                ..default()
-            },
-            data,
-        ));
+            commands.spawn(new_card(
+                i.into(),
+                i % 13,
+                [Suit::Hearts, Suit::Diamonds, Suit::Spades, Suit::Clubs][usize::from(s)],
+                true,
+                Transform::from_translation(trans(i.into(), s.into(), 0.) - trans(6., 1.5, 0.)),
+                texture_atlas_handle.clone(),
+            ));
+        }
     }
 }
 
 fn mouse_is_over(mouse_pos: Vec2, card: &Transform) -> bool {
+    let size = Vec3 {
+        x: 17.,
+        y: 24.,
+        z: 0.,
+    } * card.scale;
+
     let Vec3 { x, y, .. } = card.translation;
 
-    !(mouse_pos.x < x - 17.
-        || mouse_pos.x > x + 17.
-        || mouse_pos.y < y - 24.
-        || mouse_pos.y > y + 24.)
+    !(mouse_pos.x < x - size.x
+        || mouse_pos.x > x + size.x
+        || mouse_pos.y < y - size.y
+        || mouse_pos.y > y + size.y)
 }
 
 fn flip_card(data: &mut CardData, sprite: &mut TextureAtlasSprite) {
