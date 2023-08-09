@@ -67,6 +67,31 @@ fn sprite_index_from_data(data: &CardData) -> usize {
         .into()
 }
 
+fn card_grid(texture_atlas_handle: &Handle<TextureAtlas>) -> Vec<(SpriteSheetBundle, CardData)> {
+    (0..13u8)
+        .flat_map(|i| {
+            (0..4u8).map(move |s| {
+                fn trans(i: f32, s: f32, z: f32) -> Vec3 {
+                    Vec3 {
+                        x: 40. * i,
+                        y: 54. * s,
+                        z,
+                    }
+                }
+
+                new_card(
+                    (s * 13 + i).into(),
+                    i % 13,
+                    [Suit::Hearts, Suit::Diamonds, Suit::Spades, Suit::Clubs][usize::from(s)],
+                    true,
+                    Transform::from_translation(trans(i.into(), s.into(), 0.) - trans(6., 1.5, 0.)),
+                    texture_atlas_handle.clone(),
+                )
+            })
+        })
+        .collect()
+}
+
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -76,28 +101,7 @@ fn setup(
     let texture_atlas = TextureAtlas::from_grid(texture, Vec2::new(34., 48.), 13, 5, None, None);
     let texture_atlas_handle = texture_atlases.add(texture_atlas);
 
-    for i in 0..13u8 {
-        for s in 0..4u8 {
-            debug!("spawning card ({i},{s})");
-
-            fn trans(i: f32, s: f32, z: f32) -> Vec3 {
-                Vec3 {
-                    x: 40. * i,
-                    y: 54. * s,
-                    z,
-                }
-            }
-
-            commands.spawn(new_card(
-                i.into(),
-                i % 13,
-                [Suit::Hearts, Suit::Diamonds, Suit::Spades, Suit::Clubs][usize::from(s)],
-                true,
-                Transform::from_translation(trans(i.into(), s.into(), 0.) - trans(6., 1.5, 0.)),
-                texture_atlas_handle.clone(),
-            ));
-        }
-    }
+    commands.spawn_batch(card_grid(&texture_atlas_handle));
 }
 
 fn mouse_is_over(mouse_pos: Vec2, card: &Transform) -> bool {
