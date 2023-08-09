@@ -24,6 +24,9 @@ struct CardData {
     suit: Suit,
 }
 
+#[derive(Event)]
+struct CardFlip(usize);
+
 fn new_card(
     id: usize,
     rank: u8,
@@ -119,15 +122,25 @@ fn mouse_is_over(mouse_pos: Vec2, card: &Transform) -> bool {
         || mouse_pos.y > y + size.y)
 }
 
-fn flip_card(data: &mut CardData, sprite: &mut TextureAtlasSprite) {
-    match data.faceup {
-        true => {
+fn flip_cards(
+    mut cards: Query<(&mut CardData, &mut TextureAtlasSprite)>,
+    mut events: EventReader<CardFlip>,
+) {
+    fn flip_card(data: &mut CardData, sprite: &mut TextureAtlasSprite) {
+        if data.faceup {
             data.faceup = false;
             sprite.index = FACE_DOWN_INDEX.into();
-        }
-        false => {
+        } else {
             data.faceup = true;
             sprite.index = sprite_index_from_data(data);
+        }
+    }
+
+    for CardFlip(id) in events.iter() {
+        for (mut data, mut sprite) in cards.iter_mut() {
+            if data.id == *id {
+                flip_card(data.as_mut(), sprite.as_mut());
+            }
         }
     }
 }
@@ -135,7 +148,8 @@ fn flip_card(data: &mut CardData, sprite: &mut TextureAtlasSprite) {
 fn mouse_click(
     window: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform)>,
-    mut transforms: Query<(&mut Transform, &mut CardData, &mut TextureAtlasSprite)>,
+    transforms: Query<(&Transform, &CardData)>,
+    mut events: EventWriter<CardFlip>,
 ) {
     (|| {
         let window = window.single();
@@ -147,12 +161,12 @@ fn mouse_click(
 
         debug!("click at {mouse_pos}");
 
-        let (_, mut data, mut sprite) = transforms
-            .iter_mut()
+        let (_, data) = transforms
+            .iter()
             .filter(|(t, ..)| mouse_is_over(mouse_pos, t))
             .max_by(|(a, ..), (b, ..)| a.translation.z.partial_cmp(&b.translation.z).unwrap())?;
 
-        flip_card(data.as_mut(), sprite.as_mut());
+        events.send(CardFlip(data.id));
 
         Some(())
     })();
@@ -160,6 +174,7 @@ fn mouse_click(
 
 fn main() {
     App::new()
+        .add_event::<CardFlip>()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
         .add_systems(Startup, setup_camera)
         .add_systems(Startup, setup)
@@ -167,5 +182,6 @@ fn main() {
             Update,
             mouse_click.run_if(input_just_pressed(MouseButton::Left)),
         )
+        .add_systems(Update, flip_cards.after(mouse_click))
         .run();
 }
