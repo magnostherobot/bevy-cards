@@ -1,12 +1,11 @@
-use std::ops::RangeInclusive;
-
-use bevy::{input::common_conditions::input_just_pressed, prelude::*, window::PrimaryWindow};
-
-#[derive(Component, Deref, DerefMut)]
-struct AnimationTimer(Timer);
-
-#[derive(Component, Deref, DerefMut)]
-struct AnimationFrames(RangeInclusive<usize>);
+use bevy::{
+    input::{
+        common_conditions::{input_just_pressed, input_just_released},
+        mouse::MouseMotion,
+    },
+    prelude::*,
+    window::PrimaryWindow,
+};
 
 #[derive(Clone, Copy)]
 enum Suit {
@@ -19,16 +18,25 @@ enum Suit {
 #[derive(Component)]
 struct CardData {
     faceup: bool,
-    id: usize,
+    id: CardID,
     rank: u8,
     suit: Suit,
+    picked_up_offset: Option<Vec2>,
 }
 
+type CardID = usize;
+
 #[derive(Event)]
-struct CardFlip(usize);
+struct CardFlip(CardID);
+
+#[derive(Event)]
+struct CardPickUp(CardID, Vec2);
+
+#[derive(Event)]
+struct CardPutDown;
 
 fn new_card(
-    id: usize,
+    id: CardID,
     rank: u8,
     suit: Suit,
     faceup: bool,
@@ -40,6 +48,7 @@ fn new_card(
         id,
         rank,
         suit,
+        picked_up_offset: None,
     };
 
     (
@@ -145,11 +154,53 @@ fn flip_cards(
     }
 }
 
+fn pick_up_card(
+    mut cards: Query<(&mut CardData, &mut Transform)>,
+    mut events: EventReader<CardPickUp>,
+) {
+    for CardPickUp(id, offset) in events.iter() {
+        for (mut data, mut transform) in cards.iter_mut().filter(|(c, _)| c.id == *id) {
+            data.picked_up_offset = Some(*offset);
+            transform.translation.z = 100.;
+        }
+    }
+}
+
+fn put_down_card(
+    mut cards: Query<(&mut CardData, &mut Transform)>,
+    mut events: EventReader<CardPutDown>,
+) {
+    if !events.is_empty() {
+        events.clear();
+
+        for (mut data, mut transform) in cards.iter_mut().filter(|c| c.0.picked_up_offset.is_some())
+        {
+            data.picked_up_offset = None;
+            transform.translation.z = data.id as f32;
+        }
+    }
+}
+
+fn move_picked_up_cards(
+    mut cards: Query<(&mut CardData, &mut Transform)>,
+    mut motions: EventReader<MouseMotion>,
+) {
+    for MouseMotion { delta } in motions.iter() {
+        for (_, mut transform) in cards.iter_mut().filter(|c| c.0.picked_up_offset.is_some()) {
+            transform.translation += Vec3 {
+                x: delta.x,
+                y: -delta.y,
+                z: 0.,
+            };
+        }
+    }
+}
+
 fn mouse_click(
     window: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform)>,
     transforms: Query<(&Transform, &CardData)>,
-    mut events: EventWriter<CardFlip>,
+    mut events: EventWriter<CardPickUp>,
 ) {
     (|| {
         let window = window.single();
@@ -161,20 +212,29 @@ fn mouse_click(
 
         debug!("click at {mouse_pos}");
 
-        let (_, data) = transforms
+        let (transform, data) = transforms
             .iter()
             .filter(|(t, ..)| mouse_is_over(mouse_pos, t))
             .max_by(|(a, ..), (b, ..)| a.translation.z.partial_cmp(&b.translation.z).unwrap())?;
 
-        events.send(CardFlip(data.id));
+        events.send(CardPickUp(
+            data.id,
+            mouse_pos - transform.translation.truncate(),
+        ));
 
         Some(())
     })();
 }
 
+fn mouse_release(mut events: EventWriter<CardPutDown>) {
+    events.send(CardPutDown);
+}
+
 fn main() {
     App::new()
         .add_event::<CardFlip>()
+        .add_event::<CardPickUp>()
+        .add_event::<CardPutDown>()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
         .add_systems(Startup, setup_camera)
         .add_systems(Startup, setup)
@@ -182,6 +242,13 @@ fn main() {
             Update,
             mouse_click.run_if(input_just_pressed(MouseButton::Left)),
         )
+        .add_systems(
+            Update,
+            mouse_release.run_if(input_just_released(MouseButton::Left)),
+        )
         .add_systems(Update, flip_cards.after(mouse_click))
+        .add_systems(Update, pick_up_card.after(mouse_click))
+        .add_systems(Update, put_down_card)
+        .add_systems(Update, move_picked_up_cards)
         .run();
 }
