@@ -1,3 +1,5 @@
+use std::cmp::Ordering::Equal;
+
 use bevy::{
     input::{
         common_conditions::{input_just_pressed, input_just_released},
@@ -23,6 +25,9 @@ struct CardData {
     suit: Suit,
     picked_up_offset: Option<Vec2>,
 }
+
+#[derive(Component, Deref, DerefMut)]
+struct ZIndex(f32);
 
 type CardID = usize;
 
@@ -113,15 +118,21 @@ fn setup(
     let texture_atlas = TextureAtlas::from_grid(texture, Vec2::new(34., 48.), 13, 5, None, None);
     let texture_atlas_handle = texture_atlases.add(texture_atlas);
 
-    commands.spawn_batch(card_grid(&texture_atlas_handle));
+    let cards = card_grid(&texture_atlas_handle);
+    let z_index = ZIndex(
+        cards
+            .iter()
+            .map(|c| c.0.transform.translation.z)
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(Equal))
+            .unwrap(),
+    );
+
+    commands.spawn(z_index);
+    commands.spawn_batch(cards);
 }
 
 fn mouse_is_over(mouse_pos: Vec2, card: &Transform) -> bool {
-    let size = Vec3 {
-        x: 17.,
-        y: 24.,
-        z: 0.,
-    } * card.scale;
+    let size = Vec2 { x: 17., y: 24. } * card.scale.truncate();
 
     let Vec3 { x, y, .. } = card.translation;
 
@@ -156,27 +167,26 @@ fn flip_cards(
 
 fn pick_up_card(
     mut cards: Query<(&mut CardData, &mut Transform)>,
+    mut z_index: Query<&mut ZIndex>,
     mut events: EventReader<CardPickUp>,
 ) {
     for CardPickUp(id, offset) in events.iter() {
         for (mut data, mut transform) in cards.iter_mut().filter(|(c, _)| c.id == *id) {
             data.picked_up_offset = Some(*offset);
-            transform.translation.z = 100.;
+
+            let mut z_index = z_index.single_mut();
+            **z_index += 1.;
+            transform.translation.z = **z_index;
         }
     }
 }
 
-fn put_down_card(
-    mut cards: Query<(&mut CardData, &mut Transform)>,
-    mut events: EventReader<CardPutDown>,
-) {
+fn put_down_card(mut cards: Query<&mut CardData>, mut events: EventReader<CardPutDown>) {
     if !events.is_empty() {
         events.clear();
 
-        for (mut data, mut transform) in cards.iter_mut().filter(|c| c.0.picked_up_offset.is_some())
-        {
+        for mut data in cards.iter_mut().filter(|c| c.picked_up_offset.is_some()) {
             data.picked_up_offset = None;
-            transform.translation.z = data.id as f32;
         }
     }
 }
