@@ -1,5 +1,7 @@
 use std::cmp::Ordering::Equal;
 
+mod card;
+
 use bevy::{
     input::{
         common_conditions::{input_just_pressed, input_just_released},
@@ -8,28 +10,10 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
-
-#[derive(Clone, Copy)]
-enum Suit {
-    Hearts,
-    Diamonds,
-    Spades,
-    Clubs,
-}
-
-#[derive(Component)]
-struct CardData {
-    faceup: bool,
-    id: CardID,
-    rank: u8,
-    suit: Suit,
-    picked_up_offset: Option<Vec2>,
-}
+use card::{Card, CardID, Suit};
 
 #[derive(Component, Deref, DerefMut)]
 struct ZIndex(f32);
-
-type CardID = usize;
 
 #[derive(Event)]
 struct CardFlip(CardID);
@@ -47,8 +31,8 @@ fn new_card(
     faceup: bool,
     transform: Transform,
     texture_atlas_handle: Handle<TextureAtlas>,
-) -> (SpriteSheetBundle, CardData) {
-    let data = CardData {
+) -> (SpriteSheetBundle, Card, Name) {
+    let data = Card {
         faceup,
         id,
         rank,
@@ -59,32 +43,20 @@ fn new_card(
     (
         SpriteSheetBundle {
             texture_atlas: texture_atlas_handle,
-            sprite: TextureAtlasSprite::new(sprite_index_from_data(&data)),
+            sprite: TextureAtlasSprite::new(data.sprite_index()),
             transform,
             ..default()
         },
         data,
+        Name::new(format!("card_{id}")),
     )
 }
-
-const FACE_DOWN_INDEX: u8 = 52;
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
 }
 
-fn sprite_index_from_data(data: &CardData) -> usize {
-    (match data.suit {
-        Suit::Hearts => 0,
-        Suit::Diamonds => 1,
-        Suit::Spades => 2,
-        Suit::Clubs => 3,
-    } * 13
-        + data.rank)
-        .into()
-}
-
-fn card_grid(texture_atlas_handle: &Handle<TextureAtlas>) -> Vec<(SpriteSheetBundle, CardData)> {
+fn card_grid(texture_atlas_handle: &Handle<TextureAtlas>) -> Vec<(SpriteSheetBundle, Card, Name)> {
     (0..13u8)
         .flat_map(|i| {
             (0..4u8).map(move |s| {
@@ -109,6 +81,9 @@ fn card_grid(texture_atlas_handle: &Handle<TextureAtlas>) -> Vec<(SpriteSheetBun
         .collect()
 }
 
+#[derive(Component)]
+struct Table;
+
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -128,7 +103,19 @@ fn setup(
     );
 
     commands.spawn(z_index);
-    commands.spawn_batch(cards);
+
+    commands
+        .spawn((
+            Table,
+            SpatialBundle::default(),
+            AnimationPlayer::default(),
+            Name::new("Table"),
+        ))
+        .with_children(|parent| {
+            for card in cards {
+                parent.spawn(card);
+            }
+        });
 }
 
 fn mouse_is_over(mouse_pos: Vec2, card: &Transform) -> bool {
@@ -143,17 +130,12 @@ fn mouse_is_over(mouse_pos: Vec2, card: &Transform) -> bool {
 }
 
 fn flip_cards(
-    mut cards: Query<(&mut CardData, &mut TextureAtlasSprite)>,
+    mut cards: Query<(&mut Card, &mut TextureAtlasSprite)>,
     mut events: EventReader<CardFlip>,
 ) {
-    fn flip_card(data: &mut CardData, sprite: &mut TextureAtlasSprite) {
-        if data.faceup {
-            data.faceup = false;
-            sprite.index = FACE_DOWN_INDEX.into();
-        } else {
-            data.faceup = true;
-            sprite.index = sprite_index_from_data(data);
-        }
+    fn flip_card(data: &mut Card, sprite: &mut TextureAtlasSprite) {
+        data.faceup = !data.faceup;
+        sprite.index = data.sprite_index();
     }
 
     for CardFlip(id) in events.iter() {
@@ -166,7 +148,7 @@ fn flip_cards(
 }
 
 fn pick_up_card(
-    mut cards: Query<(&mut CardData, &mut Transform)>,
+    mut cards: Query<(&mut Card, &mut Transform)>,
     mut z_index: Query<&mut ZIndex>,
     mut events: EventReader<CardPickUp>,
 ) {
@@ -181,7 +163,7 @@ fn pick_up_card(
     }
 }
 
-fn put_down_card(mut cards: Query<&mut CardData>, mut events: EventReader<CardPutDown>) {
+fn put_down_card(mut cards: Query<&mut Card>, mut events: EventReader<CardPutDown>) {
     if !events.is_empty() {
         events.clear();
 
@@ -192,7 +174,7 @@ fn put_down_card(mut cards: Query<&mut CardData>, mut events: EventReader<CardPu
 }
 
 fn move_picked_up_cards(
-    mut cards: Query<(&mut CardData, &mut Transform)>,
+    mut cards: Query<(&mut Card, &mut Transform)>,
     mut motions: EventReader<MouseMotion>,
 ) {
     for MouseMotion { delta } in motions.iter() {
@@ -209,7 +191,7 @@ fn move_picked_up_cards(
 fn mouse_click(
     window: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform)>,
-    transforms: Query<(&Transform, &CardData)>,
+    transforms: Query<(&Transform, &Card)>,
     mut events: EventWriter<CardPickUp>,
 ) {
     (|| {
@@ -240,6 +222,29 @@ fn mouse_release(mut events: EventWriter<CardPutDown>) {
     events.send(CardPutDown);
 }
 
+fn animate_card(
+    mut player: Query<(&mut AnimationPlayer, &Name, With<Table>)>,
+    cards: Query<(&Transform, &Name, With<Card>)>,
+    mut animations: ResMut<Assets<AnimationClip>>,
+) {
+    let mut anim = AnimationClip::default();
+    let (mut anim_player, table_name, _) = player.single_mut();
+
+    for (trans, name, ()) in cards.iter() {
+        anim.add_curve_to_path(
+            EntityPath {
+                parts: vec![table_name.clone(), name.clone()],
+            },
+            VariableCurve {
+                keyframe_timestamps: vec![0.0, 1.0],
+                keyframes: Keyframes::Translation(vec![trans.translation, Vec3::new(0., 0., 0.)]),
+            },
+        )
+    }
+
+    anim_player.play(animations.add(anim));
+}
+
 fn main() {
     App::new()
         .add_event::<CardFlip>()
@@ -260,5 +265,9 @@ fn main() {
         .add_systems(Update, pick_up_card.after(mouse_click))
         .add_systems(Update, put_down_card)
         .add_systems(Update, move_picked_up_cards)
+        .add_systems(
+            Update,
+            animate_card.run_if(input_just_pressed(KeyCode::Space)),
+        )
         .run();
 }
